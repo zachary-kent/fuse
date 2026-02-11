@@ -56,9 +56,9 @@ namespace fuse {
   template <typename T>
   struct indirect_atomic {
     tlf_internal::versioned_ptr<indirect<T>> ptr;
-    indirect_atomic(T v) : ptr(New<indirect<T>>(v)) {}
+    indirect_atomic(T v) : ptr(new indirect<T>(v)) {}
     indirect_atomic() : ptr(nullptr) {}
-    ~indirect_atomic() {Retire(ptr.load());}
+    ~indirect_atomic() { delete ptr.load(); }
     T load() { return ptr.load()->value; }
     void store(T v) {
       auto old = ptr.load();
@@ -79,6 +79,7 @@ namespace fuse {
   struct tlf_atomic {
     atomic<T> v;
     shared_mutex lock;
+    tlf_atomic() = default;
     tlf_atomic(T v) : v(v) {}
     T load() {
       std::shared_lock lck(lock);
