@@ -26,11 +26,11 @@
 namespace stm {
   template <typename T, typename... Args>
   inline T* New(Args&&... args) {
-    return flck::memory_pool_<T>::New(std::forward<Args>(args)...);
+    return epoch::memory_pool_<T>::New(std::forward<Args>(args)...);
   }
   template <typename T>
   inline void Delete(T* p) {
-    flck::memory_pool_<T>::Retire(p);
+    epoch::memory_pool_<T>::Retire(p);
   }
 }
 #endif
