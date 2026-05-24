@@ -79,11 +79,24 @@ namespace verlib {
 
 namespace verlib {
 
+#ifdef OL_USE_STM
+  // Route the structures' versioned_ptr / atomic_bool through stm::atomic
+  // so that when stm:: is wired to a transactional backend (e.g.
+  // fuse::tlf_atomic) the structures' loads/stores participate in the
+  // backend's tracking. The caller must define stm:: before including
+  // this header (e.g. by including a glue header that provides
+  // stm::atomic and stm::versioned). When stm::atomic is just a typedef
+  // alias for flck::atomic (the OL-only build), this is zero overhead.
+  using versioned = ::stm::versioned;
+  template <typename T>
+  using versioned_ptr = ::stm::atomic<T*>;
+  using atomic_bool = ::stm::atomic<bool>;
+#else
   struct versioned {};
-
   template <typename T>
   using versioned_ptr = flck::atomic<T*>;
   using atomic_bool = flck::atomic<bool>;
+#endif
   using flck::lock;
   using flck::memory_pool;
   template <typename A, typename B, typename C>
