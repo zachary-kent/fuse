@@ -41,9 +41,9 @@ int main(int argc, char* argv[]) {
     std::size_t operator()(K const& k) const noexcept {
       return k * UINT64_C(0xbf58476d1ce4e5b9);}
   };
-  using SetType = unordered_map<K,V,IntHash>;
+  using SetType = parlay::unordered_map<K,V,IntHash>;
 #else
-  using SetType = ordered_map<K,V>;
+  using SetType = parlay::ordered_map<K,V>;
 #endif
   
   size_t default_size = 100000;

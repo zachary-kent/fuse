@@ -1,4 +1,5 @@
 #include "ordered_map.h"
+namespace parlay {
 template <typename K_,
           typename V_,
           typename Compare = std::less<K_>>
@@ -19,3 +20,4 @@ struct ordered_map {
   static void stats() {}
   static void shuffle(long n) {}
 };
+}

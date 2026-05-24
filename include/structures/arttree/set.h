@@ -4,7 +4,9 @@
 
 #include "ordered_map.h"
 
+namespace parlay {
 template <typename K,
           typename V,
           typename String = verlib::int_string<K>>
 using ordered_map = verlib::arttree<K,V,String>;
+}
