@@ -71,9 +71,6 @@ struct avltree {
     return 1 + std::max(n->lefth.load(), n->righth.load());
   }
 
-  static verlib::memory_pool<node> node_pool;
-  static verlib::memory_pool<leaf> leaf_pool;
-
   static constexpr size_t max_iters = 10000000;
   
   static auto find_location(node* root, const K& k) {
@@ -130,16 +127,16 @@ struct avltree {
           if(l->removed.load() || (rotateRight && balance(l) < 0) || (!rotateRight && balance(l) > 0)) return false;
           node* new_n, *new_l;
           if(rotateRight) {
-            new_n = node_pool.New(n->key, l->right.load(), n->right.load(), l->righth.load(), n->righth.load());
-            new_l = node_pool.New(l->key, l->left.load(), new_n, l->lefth.load(), height(new_n));
+            new_n = stm::New<node>(n->key, l->right.load(), n->right.load(), l->righth.load(), n->righth.load());
+            new_l = stm::New<node>(l->key, l->left.load(), new_n, l->lefth.load(), height(new_n));
           } else {
-            new_n = node_pool.New(n->key, n->left.load(), l->left.load(), n->lefth.load(), l->lefth.load());
-            new_l = node_pool.New(l->key, new_n, l->right.load(), height(new_n), l->righth.load());
+            new_n = stm::New<node>(n->key, n->left.load(), l->left.load(), n->lefth.load(), l->lefth.load());
+            new_l = stm::New<node>(l->key, new_n, l->right.load(), height(new_n), l->righth.load());
           }
           if(p_left) p->left = new_l;
           else p->right = new_l;
-          n->removed = true; node_pool.Retire(n);
-          l->removed = true; node_pool.Retire(l);
+          n->removed = true; stm::Delete(n);
+          l->removed = true; stm::Delete(l);
           return true;
         });
       });
@@ -160,19 +157,19 @@ struct avltree {
             if(cc->removed.load()) return false;
             node* new_n, *new_l, *new_cc;
             if(rotateLR) {
-              new_n = node_pool.New(n->key, cc->right.load(), n->right.load(), cc->righth.load(), n->righth.load());
-              new_l = node_pool.New(l->key, l->left.load(), cc->left.load(), l->lefth.load(), cc->lefth.load());
-              new_cc = node_pool.New(cc->key, new_l, new_n, height(new_l), height(new_n));
+              new_n = stm::New<node>(n->key, cc->right.load(), n->right.load(), cc->righth.load(), n->righth.load());
+              new_l = stm::New<node>(l->key, l->left.load(), cc->left.load(), l->lefth.load(), cc->lefth.load());
+              new_cc = stm::New<node>(cc->key, new_l, new_n, height(new_l), height(new_n));
             } else {
-              new_n = node_pool.New(n->key, n->left.load(), cc->left.load(), n->lefth.load(), cc->lefth.load());
-              new_l = node_pool.New(l->key, cc->right.load(), l->right.load(), cc->righth.load(), l->righth.load());
-              new_cc = node_pool.New(cc->key, new_n, new_l, height(new_n), height(new_l));
+              new_n = stm::New<node>(n->key, n->left.load(), cc->left.load(), n->lefth.load(), cc->lefth.load());
+              new_l = stm::New<node>(l->key, cc->right.load(), l->right.load(), cc->righth.load(), l->righth.load());
+              new_cc = stm::New<node>(cc->key, new_n, new_l, height(new_n), height(new_l));
             }
             if(p_left) p->left = new_cc;
             else p->right = new_cc;
-            n->removed = true; node_pool.Retire(n);
-            l->removed = true; node_pool.Retire(l);
-            cc->removed = true; node_pool.Retire(cc);
+            n->removed = true; stm::Delete(n);
+            l->removed = true; stm::Delete(l);
+            cc->removed = true; stm::Delete(cc);
             return true;            
           });
         });
@@ -309,15 +306,15 @@ struct avltree {
       if (p->try_lock([=] () {
            auto ptr = p_left ? &(p->left) : &(p->right);
            if (p->removed.load() || ptr->load() != l) return false;
-           node* new_l = (node*) leaf_pool.New(k, v);
+           node* new_l = (node*) stm::New<leaf>(k, v);
            if (present) {
              (*ptr) = new_l;
-             leaf_pool.Retire((leaf*) l);
+             stm::Delete((leaf*) l);
              return true;
            } else {
              node* new_internal = (Less(k, l) ?
-                                   node_pool.New(l->key, new_l, l, 1, 1) :
-                                   node_pool.New(k, l, new_l, 1, 1));
+                                   stm::New<node>(l->key, new_l, l, 1, 1) :
+                                   stm::New<node>(k, l, new_l, 1, 1));
              (*ptr) = new_internal;
              return true; }})) {
         fixToKey(root, k);
@@ -352,8 +349,8 @@ struct avltree {
             if (p_left) std::swap(ll,lr);
             if (lr != l) return false;
             p->removed = true;
-            node_pool.Retire(p);
-            leaf_pool.Retire((leaf*) l);
+            stm::Delete(p);
+            stm::Delete((leaf*) l);
             (*ptr) = ll; // shortcut
             return true; });})) {
         fixToKey(root, k);
@@ -392,13 +389,13 @@ struct avltree {
   }
 
   avltree() {
-    node* l = (node*) leaf_pool.New();
-    root = node_pool.New(l);
+    node* l = (node*) stm::New<leaf>();
+    root = stm::New<node>(l);
   }
 
   avltree(size_t n) { 
-    node* l = (node*) leaf_pool.New();
-    root = node_pool.New(l);
+    node* l = (node*) stm::New<leaf>();
+    root = stm::New<node>(l);
   }
 
   ~avltree() { Retire(root);}
@@ -419,11 +416,11 @@ struct avltree {
 
   static void Retire(node* p) {
     if (p == nullptr) return;
-    if (p->is_leaf) leaf_pool.Retire((leaf*) p);
+    if (p->is_leaf) stm::Delete((leaf*) p);
     else {
       parlay::par_do([&] () { Retire((p->left).load()); },
          [&] () { Retire((p->right).load()); });
-      node_pool.Retire(p);
+      stm::Delete(p);
     }
   }
   
@@ -479,30 +476,15 @@ struct avltree {
     return cnt;
   }
 
-  static void clear() {
-    node_pool.clear();
-    leaf_pool.clear();
-  }
+  static void clear() {}
 
-  static void reserve(size_t n) {
-    node_pool.reserve(n);
-    leaf_pool.reserve(n);
-  }
+  static void reserve(size_t n) {}
 
   static void shuffle(size_t n) { }
 
-  static void stats() {
-    node_pool.stats();
-    leaf_pool.stats();
-  }
-  
+  static void stats() {}
+
 };
-
-template <typename K, typename V, typename C>
-verlib::memory_pool<typename avltree<K,V,C>::node> avltree<K,V,C>::node_pool;
-
-template <typename K, typename V, typename C>
-verlib::memory_pool<typename avltree<K,V,C>::leaf> avltree<K,V,C>::leaf_pool;
 
 } // end namespace verlib
 

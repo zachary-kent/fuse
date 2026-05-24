@@ -37,8 +37,6 @@ struct list {
 
   node* root;
   
-  static verlib::memory_pool<node> node_pool;
-
   static auto find_location(node* root, const K& k) {
     node* cur = root;
     node* nxt = (cur->next).load();
@@ -60,7 +58,7 @@ struct list {
       else return {};
     if (cur->lck.try_lock([=] {
       if (verlib::validate([&] {return !cur->removed.load() && (cur->next).load() == nxt;})) {
-	node* new_node = node_pool.New(k, v, nxt);
+	node* new_node = stm::New<node>(k, v, nxt);
 	cur->next = new_node; // splice in
 	return true;
       } else return false;})) return true;
@@ -90,14 +88,14 @@ struct list {
 	return nxtnxt->lck.try_lock([=] {
           nxt->removed = true;
 	  nxtnxt->removed = true;
-	  cur->next = node_pool.New(nxtnxt); // copy nxt->next
-	  node_pool.Retire(nxt);
-	  node_pool.Retire(nxtnxt); 
+	  cur->next = stm::New<node>(nxtnxt); // copy nxt->next
+	  stm::Delete(nxt);
+	  stm::Delete(nxtnxt); 
 	  return true;});
 #else
 	nxt->removed = true;
 	cur->next = nxtnxt; // shortcut
-	node_pool.Retire(nxt);
+	stm::Delete(nxt);
 	return true;
 #endif
       });}))
@@ -156,8 +154,8 @@ struct list {
     }
   }
 
-  list() : root(node_pool.New(node_pool.New(nullptr,true),false)) {}
-  list(size_t n) : root(node_pool.New(node_pool.New(nullptr,true),false)) {}
+  list() : root(stm::New<node>(stm::New<node>(nullptr,true),false)) {}
+  list(size_t n) : root(stm::New<node>(stm::New<node>(nullptr,true),false)) {}
 
   void print() {
     node* ptr = (root->next).load();
@@ -170,7 +168,7 @@ struct list {
 
   void retire_recursive(node* p) {
     if (!p->is_end) retire_recursive(p->next.load());
-    node_pool.Retire(p);
+    stm::Delete(p);
   }
 
   ~list() {retire_recursive(root);}
@@ -195,15 +193,12 @@ struct list {
     return i;
   }
 
-  static void clear() { node_pool.clear();}
-  static void reserve(size_t n) { node_pool.reserve(n);}
-  static void shuffle(size_t n) { } // {node_pool.shuffle(n);}
-  static void stats() { node_pool.stats();}
+  static void clear() {}
+  static void reserve(size_t n) {}
+  static void shuffle(size_t n) {}
+  static void stats() {}
 
 };
-
-template <typename K, typename V, typename C>
-verlib::memory_pool<typename list<K,V,C>::node> list<K,V,C>::node_pool;
 
 }
 

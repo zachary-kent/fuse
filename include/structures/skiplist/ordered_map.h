@@ -37,8 +37,6 @@ struct skiplist {
     V v;
     Val(V v) : v(v) {}
   };
-  static verlib::memory_pool<Val> val_pool;
-  
   template <int NumLevels>
   struct alignas(32) Node : verlib::versioned, verlib::lock {
     K key;
@@ -47,7 +45,7 @@ struct skiplist {
     verlib::atomic_bool removed;
     verlib::versioned_ptr<Node<0>> next[NumLevels+1];
     Node(const K& k, const V& v, int level)
-      : key(k), value(val_pool.New(v)), level(level), removed(false) {}
+      : key(k), value(stm::New<Val>(v)), level(level), removed(false) {}
     // for the root
     Node() : value(nullptr), level(max_levels-1), removed(false) {
       for (int i=0; i < max_levels; i++)
@@ -62,18 +60,15 @@ struct skiplist {
   static constexpr int small_cutoff = 4;
   using tallNode = Node<max_levels>;
   using shortNode = Node<small_cutoff>;
-  static verlib::memory_pool<tallNode> tall_node_pool;
-  static verlib::memory_pool<shortNode> short_node_pool;
-  
   node* new_node(const K& k, const V& v, int level) {
-    if (level > small_cutoff) return (node*) tall_node_pool.New(k, v, level);
-    else return (node*) short_node_pool.New(k, v, level);
+    if (level > small_cutoff) return (node*) stm::New<tallNode>(k, v, level);
+    else return (node*) stm::New<shortNode>(k, v, level);
   }
   void retire_node(node* v) {
     Val* x = v->value.load();
-    if (x != nullptr) val_pool.Retire(x);
-    if (v->level > small_cutoff) tall_node_pool.Retire((tallNode*) v);
-    else short_node_pool.Retire((shortNode*) v);
+    if (x != nullptr) stm::Delete(x);
+    if (v->level > small_cutoff) stm::Delete((tallNode*) v);
+    else stm::Delete((shortNode*) v);
   }
   
   node* root;
@@ -138,8 +133,8 @@ struct skiplist {
             if (!verlib::validate([&] {return !nxt->removed.load();}))
               return false;
             Val* oldv = nxt->value.load();
-            nxt->value = val_pool.New(v); // update the value
-            val_pool.Retire(oldv);
+            nxt->value = stm::New<Val>(v); // update the value
+            stm::Delete(oldv);
             return true;})) return false;
           else return {};
         }
@@ -243,8 +238,8 @@ struct skiplist {
     }
   }
 
-  skiplist() : root((node*) tall_node_pool.New()) {}
-  skiplist(long n) : root((node*) tall_node_pool.New()) {}
+  skiplist() : root((node*) stm::New<tallNode>()) {}
+  skiplist(long n) : root((node*) stm::New<tallNode>()) {}
 
   void print() {
     node* ptr = (root->next[0]).load();
@@ -300,21 +295,12 @@ struct skiplist {
       return cnt+1;})) - 1;
   }
 
-  static void clear() { tall_node_pool.clear(); short_node_pool.clear();}
+  static void clear() {}
   static void reserve(size_t n) { }
   static void shuffle(size_t n) { }
-  static void stats() { tall_node_pool.stats(); short_node_pool.stats();}
+  static void stats() {}
 
 };
-
-template <typename K, typename V, typename C>
-verlib::memory_pool<typename skiplist<K,V,C>::shortNode> skiplist<K,V,C>::short_node_pool;
-
-template <typename K, typename V, typename C>
-verlib::memory_pool<typename skiplist<K,V,C>::tallNode> skiplist<K,V,C>::tall_node_pool;
-
-template <typename K, typename V, typename C>
-verlib::memory_pool<typename skiplist<K,V,C>::Val> skiplist<K,V,C>::val_pool;
 
 }
 #endif //VERLIB_SKIPLIST_H_

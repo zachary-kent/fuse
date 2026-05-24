@@ -6,9 +6,9 @@ struct Rebalance {
   using node = typename Tree::node;
   using K = typename Tree::K;
   static node* new_node(K k, node* l, node* r) {
-    return Tree::node_pool.New(k, l, r); }
+    return stm::New<node>(k, l, r); }
   static void retire_node(node* x) {
-    (&(Tree::node_pool))->Retire(x);
+    stm::Delete(x);
   }
   Rebalance() {}
   
@@ -39,7 +39,7 @@ struct Rebalance {
                 (*gptr) = new_node(c->key, nc, c->right.load());
               }
               // retire the old copies, which have been replaced
-              p->removed = true; Tree::node_pool.Retire(p);
+              p->removed = true; stm::Delete(p);
               c->removed = true; retire_node(c);
               return true; });  });  });
   }

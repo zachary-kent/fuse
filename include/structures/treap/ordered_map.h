@@ -109,8 +109,6 @@ struct treap {
     }
   };
 
-  static verlib::memory_pool<node> node_pool;
-  static verlib::memory_pool<leaf> leaf_pool;
 
   enum direction {left, right};
   
@@ -155,28 +153,28 @@ struct treap {
                 return false;
 	      // if the leaf is the left sentinal then create new node
 	      if (old_l->is_sentinal) {
-		leaf* new_l = leaf_pool.New(KV(k,v));
-		(*ptr) = node_pool.New(k, l, (node*) new_l);
+		leaf* new_l = stm::New<leaf>(KV(k,v));
+		(*ptr) = stm::New<node>(k, l, (node*) new_l);
 		return true;
 	      }
 
               // create new_node by copying old
-              leaf* new_l = leaf_pool.New(old_l->keyvals, old_l->size, k, v, present);
+              leaf* new_l = stm::New<leaf>(old_l->keyvals, old_l->size, k, v, present);
 
 	      // if the block overlflows, split into two blocks and
 	      // create a parent
 	      if (new_l->size > block_size) {
 		int size_l = new_l->size/2;
 		int size_r = new_l->size - size_l;
-                leaf* new_ll = leaf_pool.New(new_l->keyvals, size_l);
-                leaf* new_lr = leaf_pool.New(new_l->keyvals + size_l, size_r);
-		(*ptr) = node_pool.New(new_l->keyvals[size_l].key,
+                leaf* new_ll = stm::New<leaf>(new_l->keyvals, size_l);
+                leaf* new_lr = stm::New<leaf>(new_l->keyvals + size_l, size_r);
+		(*ptr) = stm::New<node>(new_l->keyvals[size_l].key,
                                        (node*) new_ll, (node*) new_lr);
-		leaf_pool.Retire(new_l);
+		stm::Delete(new_l);
 	      } else (*ptr) = (node*) new_l;
 
 	      // retire the old block
-	      leaf_pool.Retire(old_l);
+	      stm::Delete(old_l);
 	      return true;
 	    })) {
 	  if (balanced) Balance::rebalance(p, root, k);
@@ -221,8 +219,8 @@ struct treap {
                   return false;
 
 		// update parent to point to new leaf, and retire old
-		(*ptr) = (node*) leaf_pool.New(old_l->keyvals, old_l->size, k);
-		leaf_pool.Retire(old_l);
+		(*ptr) = (node*) stm::New<leaf>(old_l->keyvals, old_l->size, k);
+		stm::Delete(old_l);
 		return true;
 	      }))
 	    return true;
@@ -247,8 +245,8 @@ struct treap {
 		  if (lr != l) return false; // if l has changed then exit
 		  p->removed = true;
 		  (*gptr) = ll; // shortcut
-		  node_pool.Retire(p);
-		  leaf_pool.Retire((leaf*) l);
+		  stm::Delete(p);
+		  stm::Delete((leaf*) l);
 		  return true; });}))
 	    return true;
 	// try again if unsuccessful
@@ -288,18 +286,18 @@ struct treap {
     } else return ot();
   }
 
-  node* empty() { return node_pool.New((node*) leaf_pool.New()); }
+  node* empty() { return stm::New<node>((node*) stm::New<leaf>()); }
   treap() : root(empty()) {}
   treap(size_t n) : root(empty()) {}
   ~treap() { Retire(root);}
   
   static void Retire(node* p) {
     if (p == nullptr) return;
-    if (p->is_leaf) leaf_pool.Retire((leaf*) p);
+    if (p->is_leaf) stm::Delete((leaf*) p);
     else {
       parlay::par_do([&] () { Retire((p->left).load()); },
 		     [&] () { Retire((p->right).load()); });
-      node_pool.Retire(p);
+      stm::Delete(p);
     }
   }
 
@@ -366,30 +364,15 @@ struct treap {
     std::cout << std::endl;
   }
 
-  static void clear() {
-    node_pool.clear();
-    leaf_pool.clear();
-  }
+  static void clear() {}
 
-  static void reserve(size_t n) {
-    node_pool.reserve(n/8);
-    leaf_pool.reserve(n);
-  }
+  static void reserve(size_t n) {}
 
   static void shuffle(size_t n) { }
 
-  static void stats() {
-    node_pool.stats();
-    leaf_pool.stats();
-  }
+  static void stats() {}
 
 };
-
-template <typename K, typename V, typename H, typename C>
-verlib::memory_pool<typename treap<K,V,H,C>::node> treap<K,V,H,C>::node_pool;
-
-template <typename K, typename V, typename H, typename C>
-verlib::memory_pool<typename treap<K,V,H,C>::leaf> treap<K,V,H,C>::leaf_pool;
 
 } // end namespace verlib
 
