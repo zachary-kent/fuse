@@ -100,6 +100,13 @@ namespace fuse {
       store(b);
       return b;
     }
+#ifdef WeakLoad
+    T load_unprotected() { return v.load();}
+    void validate() { v.validate(); }
+#else
+    T load_unprotected() { return load(); }
+    void validate() { }
+#endif // WeakLoad
   };
 
 } // fuse
