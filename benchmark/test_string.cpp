@@ -37,11 +37,11 @@ int main(int argc, char* argv[]) {
     commandLine P(argc,argv,"[-r <rounds>] [-threads <num threads>] [-u <update percent>] [-mfind <multifind percent>] [-rs <multifind size>] [-verbose] [-shuffle] [-stats] [-no_check] [-csv] [-geo_csv] <filename>");
 
 #ifdef RADIX
-    using SetType = ordered_map<K,V,RadixString<K>>;
+    using SetType = parlay::ordered_map<K,V,RadixString<K>>;
 #elif HASH
-    using SetType = unordered_map<K,V,parlay::hash<K>>;
+    using SetType = parlay::unordered_map<K,V,parlay::hash<K>>;
 #else // Comparison
-    using SetType = ordered_map<K,V>;
+    using SetType = parlay::ordered_map<K,V>;
 #endif
 
   auto filename = P.getArgument(0);

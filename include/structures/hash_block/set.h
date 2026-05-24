@@ -3,8 +3,10 @@
 
 #include "unordered_map.h"
 
+namespace parlay {
 template <typename K,
 	  typename V,
 	  class Hash = std::hash<K>,
 	  class KeyEqual = std::equal_to<K>>
 using unordered_map = verlib::hash_block<K,V,Hash,KeyEqual>;
+}
