@@ -17,6 +17,24 @@
 #define CRAPYSTM 1
 #endif
 
+// Default stm::New / stm::Delete for builds without a glue (the upstream
+// flock benchmark binaries, _flock targets). Structures call stm::New /
+// stm::Delete directly; when OL_USE_STM is set, the user's glue header is
+// expected to have provided its own stm:: namespace before this header
+// is included, in which case these fallbacks are shadowed.
+#ifndef OL_USE_STM
+namespace stm {
+  template <typename T, typename... Args>
+  inline T* New(Args&&... args) {
+    return flck::memory_pool_<T>::New(std::forward<Args>(args)...);
+  }
+  template <typename T>
+  inline void Delete(T* p) {
+    flck::memory_pool_<T>::Retire(p);
+  }
+}
+#endif
+
 #if defined(Versioned)
 #define WeakLoad
 #define AtomicSingleton
@@ -94,15 +112,12 @@ namespace verlib {
   using versioned_ptr = ::stm::atomic<T*>;
   using atomic_bool = ::stm::atomic<bool>;
   using lock = ::stm::lock;
-  template <typename T>
-  using memory_pool = ::stm::memory_pool<T>;
 #else
   struct versioned {};
   template <typename T>
   using versioned_ptr = flck::atomic<T*>;
   using atomic_bool = flck::atomic<bool>;
   using flck::lock;
-  using flck::memory_pool;
 #endif
   template <typename A, typename B, typename C>
   bool validate(const A& a, const B& b, const C& c) {return true;}
