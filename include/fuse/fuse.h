@@ -85,13 +85,25 @@ namespace fuse {
     shared_mutex lock;
     tlf_atomic() = default;
     tlf_atomic(T v) : v(v) {}
+    tlf_atomic(const tlf_atomic& other) : v(const_cast<tlf_atomic&>(other).load()) {}
+    tlf_atomic& operator=(const tlf_atomic& other) {
+      if (this != &other) {
+        store(const_cast<tlf_atomic&>(other).load());
+      }
+      return *this;
+    }
     T load() {
       std::shared_lock lck(lock);
-      return v.load(); }
+      return v.load();
+    }
     void store(T x) {
       std::unique_lock lck(lock);
-      v.store(x);}
-    T operator=(T b) {store(b); return b; }
+      v.store(x);
+    }
+    T operator=(T b) {
+      store(b);
+      return b;
+    }
   };
 
 } // fuse
