@@ -94,30 +94,40 @@ namespace verlib {
   using versioned_ptr = ::stm::atomic<T*>;
   using atomic_bool = ::stm::atomic<bool>;
   using lock = ::stm::lock;
+  template <typename T>
+  using memory_pool = ::stm::memory_pool<T>;
 #else
   struct versioned {};
   template <typename T>
   using versioned_ptr = flck::atomic<T*>;
   using atomic_bool = flck::atomic<bool>;
   using flck::lock;
-#endif
   using flck::memory_pool;
+#endif
   template <typename A, typename B, typename C>
   bool validate(const A& a, const B& b, const C& c) {return true;}
 
   template <typename F>
   auto with_snapshot(F f, bool unused_parameter=false) {
+#ifdef OL_USE_STM
+    return ::stm::with_epoch([&] { return f();});
+#else
     return flck::with_epoch([&] { return f();});
+#endif
   }
 
   template <typename F>
   auto atomic_read_only(F f) {
+#ifdef OL_USE_STM
+    return ::stm::with_epoch([&] { return f();});
+#else
     return flck::with_epoch([&] { return f();});
+#endif
   }
-  
+
   template <typename F>
   auto atomic_region(const F& f) {
-    return epoch::with_epoch([&] { 
+    return epoch::with_epoch([&] {
       if constexpr (std::is_void_v<std::invoke_result_t<F>>) {f();}
       else {return *(f());}
     });
@@ -127,7 +137,19 @@ namespace verlib {
 #endif // Versioned
 
 namespace verlib {
+#ifdef OL_USE_STM
+  // Route epoch protection through the configured stm:: backend instead
+  // of flck. This is required when the structures' memory_pool is also
+  // routed through stm:: (e.g., uSTM's uepoch-based pool), so retired
+  // nodes are protected by the same EBR that the STM uses for its own
+  // read/write log.
+  template <typename F>
+  auto with_epoch(F&& f) {
+    return ::stm::with_epoch(std::forward<F>(f));
+  }
+#else
   using flck::with_epoch;
+#endif
 
 #if defined(WeakLoad)
 #define AtomicSingletonReadOnly
