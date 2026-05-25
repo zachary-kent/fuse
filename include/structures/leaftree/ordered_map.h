@@ -52,6 +52,8 @@ struct leaftree {
     return !(a->is_sentinal || Compare{}(k, a->key) || Compare{}(a->key ,k));
   }
 
+  static verlib::memory_pool<internal> internal_pool;
+  static verlib::memory_pool<leaf> leaf_pool;
 
   static auto find_location(internal* root, const K& k) {
     internal* gp = nullptr;
@@ -97,12 +99,12 @@ struct leaftree {
       auto l_new = ptr->load();
       if (!verlib::validate([&] {return !p->removed.load() && l_new == l;}))
         return false;
-      node* new_l = stm::New<leaf>(k, v);
+      node* new_l = leaf_pool.New(k, v);
       //if (!l->is_sentinal && equal(k, l->key)) *ptr = new_l; // update existing key (only if upsert)
       //else
       *ptr = (Less(k, l) ?
-              stm::New<internal>(l->key, new_l, l) :
-              stm::New<internal>(k, l, new_l));
+              internal_pool.New(l->key, new_l, l) :
+              internal_pool.New(k, l, new_l));
       return true;});
     if (r) return !Equal(k, l); 
     else return {};
@@ -136,8 +138,8 @@ struct leaftree {
         if (lr != l) return false;
         p->removed = true;
         (*ptr) = ll; // shortcut
-        stm::Delete(p);
-        stm::Delete(l);
+        internal_pool.Retire(p);
+        leaf_pool.Retire(l);
         return true; });}))
       return std::optional<bool>(true);
     else return {};
@@ -176,8 +178,8 @@ struct leaftree {
     return ot();
   }
 
-  leaftree() : root(stm::New<internal>(stm::New<leaf>())) {}
-  leaftree(size_t n) : root(stm::New<internal>(stm::New<leaf>())) {}
+  leaftree() : root(internal_pool.New(leaf_pool.New())) {}
+  leaftree(size_t n) : root(internal_pool.New(leaf_pool.New())) {}
   ~leaftree() { Retire(root);}
   
   void print() {
@@ -199,12 +201,12 @@ struct leaftree {
 
   static void Retire(node* p) {
     if (p == nullptr) return;
-    if (p->is_leaf) stm::Delete((leaf*) p);
+    if (p->is_leaf) leaf_pool.Retire((leaf*) p);
     else {
       internal* pp = (internal*) p;
       parlay::par_do([&] () { Retire((pp->left).load()); },
 		     [&] () { Retire((pp->right).load()); });
-      stm::Delete(pp);
+      internal_pool.Retire(pp);
     }
   }
   
@@ -259,15 +261,33 @@ struct leaftree {
     return cnt;
   }
   
-  static void clear() {}
+  static void clear() {
+    internal_pool.clear();
+    leaf_pool.clear();
+  }
 
-  static void reserve(size_t n) {}
+  static void reserve(size_t n) {
+    internal_pool.reserve(n);
+    leaf_pool.reserve(n);
+  }
 
-  static void shuffle(size_t n) {}
+  static void shuffle(size_t n) {
+    //internal_pool.shuffle(n);
+    //leaf_pool.shuffle(n);
+  }
 
-  static void stats() {}
-
+  static void stats() {
+    internal_pool.stats();
+    leaf_pool.stats();
+  }
+  
 };
+
+template <typename K, typename V, typename C>
+verlib::memory_pool<typename leaftree<K,V,C>::internal> leaftree<K,V,C>::internal_pool;
+
+template <typename K, typename V, typename C>
+verlib::memory_pool<typename leaftree<K,V,C>::leaf> leaftree<K,V,C>::leaf_pool;
 
 }
 #endif // VERLIB_LEAFTREE_H_

@@ -324,6 +324,12 @@ struct arttree {
   using small_leaf = generic_leaf<max_small_leaf_size>;
   using big_leaf = generic_leaf<max_big_leaf_size>;
   
+  static verlib::memory_pool<full_node> full_pool;
+  static verlib::memory_pool<indirect_node> indirect_pool;
+  static verlib::memory_pool<sparse_node> sparse_pool;
+  static verlib::memory_pool<small_leaf> small_leaf_pool;
+  static verlib::memory_pool<big_leaf> big_leaf_pool;
+
   // dispatch based on node type
   // A returned nullptr means no child matching the key
   static inline node_ptr* get_child(node* x, const K& k) {
@@ -358,23 +364,23 @@ struct arttree {
       return p->try_lock([=] {
         // if (!verlib::validate([&] {return get_child(p,k) == nullptr;}))
         //   return false;
-        node* c = (node*) stm::New<small_leaf>(k, v);
+        node* c = (node*) small_leaf_pool.New(k, v);
         if (p->nt == Indirect) {
           indirect_node* i_n = (indirect_node*) p;
           i_n->removed = true;
           if (is_full(p)) // copy indirect to full
-            *child_ptr = (node*) stm::New<full_node>(i_n, c, k);
+            *child_ptr = (node*) full_pool.New(i_n, c, k);
           else // copy indirect to indirect
-            *child_ptr = (node*) stm::New<indirect_node>(i_n, c, k);
-          stm::Delete(i_n);
+            *child_ptr = (node*) indirect_pool.New(i_n, c, k);
+          indirect_pool.Retire(i_n);
         } else { // (p->nt == Sparse)
           sparse_node* s_n = (sparse_node*) p;
           s_n->removed = true;
           if (is_full(p)) // copy sparse to indirect
-            *child_ptr = (node*) stm::New<indirect_node>(s_n, c, k);
+            *child_ptr = (node*) indirect_pool.New(s_n, c, k);
           else // copy sparse to sparse
-            *child_ptr = (node*) stm::New<sparse_node>(s_n, c, k);
-          stm::Delete(s_n);
+            *child_ptr = (node*) sparse_pool.New(s_n, c, k);
+          sparse_pool.Retire(s_n);
         }
         return true;}); // end try_lock(p->lck
       return true;}); // end try_lock(gp->lck
@@ -410,8 +416,8 @@ struct arttree {
 
   static node* new_leaf(int byte_pos, KV* start, KV* end) {
     if ((end-start) > max_small_leaf_size)
-      return (node*) stm::New<big_leaf>(byte_pos, start, end);
-    else return (node*) stm::New<small_leaf>(byte_pos, start, end);
+      return (node*) big_leaf_pool.New(byte_pos, start, end);
+    else return (node*) small_leaf_pool.New(byte_pos, start, end);
   }
   
   bool insert_(const K& k, const V& v) {
@@ -450,23 +456,23 @@ struct arttree {
           return false;
         // fill a null pointer with the new leaf
         if (c == nullptr)
-          (*cptr) = (node*) stm::New<small_leaf>(k, v);
+          (*cptr) = (node*) small_leaf_pool.New(k, v);
         else if (c->is_leaf()) {
           leaf* l = (leaf*) c;
           small_leaf* sl = (small_leaf*) c;
           big_leaf* bl = (big_leaf*) c;
           if (l->size < max_small_leaf_size) {
-            *cptr = (node*) stm::New<small_leaf>(byte_pos, l, k, v, replace);
-            stm::Delete(sl);
+            *cptr = (node*) small_leaf_pool.New(byte_pos, l, k, v, replace);
+            small_leaf_pool.Retire(sl);
           } else if (l->size == max_small_leaf_size) {
             if (replace)
-              *cptr = (node*) stm::New<small_leaf>(byte_pos, l, k, v, true);
+              *cptr = (node*) small_leaf_pool.New(byte_pos, l, k, v, true);
             else
-              *cptr = (node*) stm::New<big_leaf>(byte_pos, l, k, v, false);
-            stm::Delete(sl);
+              *cptr = (node*) big_leaf_pool.New(byte_pos, l, k, v, false);
+            small_leaf_pool.Retire(sl);
           } else if (l->size < max_big_leaf_size || replace) {
-            *cptr = (node*) stm::New<big_leaf>(byte_pos, l, k, v, replace);
-            stm::Delete(bl);
+            *cptr = (node*) big_leaf_pool.New(byte_pos, l, k, v, replace);
+            big_leaf_pool.Retire(bl);
           } else { // too large
             int n = max_big_leaf_size + 1;
 
@@ -490,12 +496,12 @@ struct arttree {
             children[j++] = new_leaf(byte_pos+1, &tmp[start], &tmp[n]);
 
             // insert the new leaves into a sparse node
-            *cptr = (node*) stm::New<sparse_node>(byte_pos, &children[0], &children[j]);
-            stm::Delete(bl);
+            *cptr = (node*) sparse_pool.New(byte_pos, &children[0], &children[j]);
+            big_leaf_pool.Retire(bl);
           }
         } else { // not a leaf
-          node* new_l = (node*) stm::New<small_leaf>(k, v);
-          *cptr = (node*) stm::New<sparse_node>(byte_pos, c, c->key,
+          node* new_l = (node*) small_leaf_pool.New(k, v);
+          *cptr = (node*) sparse_pool.New(byte_pos, c, c->key,
                                           new_l, k);
         }
         return true;})) return !replace;
@@ -553,25 +559,25 @@ struct arttree {
         // return false;
         //     *child_ptr = other_child;
         //     p->removed = true;
-        //     stm::Delete((sparse_node*) p);
-        //     stm::Delete((small_leaf*) l);
+        //     sparse_pool.Retire((sparse_node*) p);
+        //     small_leaf_pool.Retire((small_leaf*) l);
         //     return true;});
         // } else 
         { // just remove child
           *cptr = nullptr;
-          stm::Delete((small_leaf*) l);
+          small_leaf_pool.Retire((small_leaf*) l);
           return true;
         }
       } else { // at least 2 in leaf
         if (l->size > max_small_leaf_size + 1) {
-          *cptr = (node*) stm::New<big_leaf>(l, k);
-          stm::Delete((big_leaf*) l);
+          *cptr = (node*) big_leaf_pool.New(l, k);
+          big_leaf_pool.Retire((big_leaf*) l);
         } else if (l->size == max_small_leaf_size + 1) {
-          *cptr = (node*) stm::New<small_leaf>(l, k);
-          stm::Delete((big_leaf*) l);
+          *cptr = (node*) small_leaf_pool.New(l, k);
+          big_leaf_pool.Retire((big_leaf*) l);
         } else {
-          *cptr = (node*) stm::New<small_leaf>(l, k);
-          stm::Delete((small_leaf*) l);
+          *cptr = (node*) small_leaf_pool.New(l, k);
+          small_leaf_pool.Retire((small_leaf*) l);
         }
         return true;
       }})) return true;
@@ -665,13 +671,13 @@ struct arttree {
   }
 
   arttree() {
-    auto r = stm::New<full_node>();
+    auto r = full_pool.New();
     r->byte_num = 0;
     root = (node*) r;
   }
 
   arttree(size_t n) {
-    auto r = stm::New<full_node>();
+    auto r = full_pool.New();
     r->byte_num = 0;
     root = (node*) r;
   }
@@ -721,24 +727,24 @@ struct arttree {
     if (p == nullptr) return;
     if (p->nt == Leaf) {
       if (p->size > max_small_leaf_size)
-        stm::Delete((big_leaf*) p);
-      else stm::Delete((small_leaf*) p);
+        big_leaf_pool.Retire((big_leaf*) p);
+      else small_leaf_pool.Retire((small_leaf*) p);
     }
     else if (p->nt == Sparse) {
       auto pp = (sparse_node*) p;
       parlay::parallel_for(0, pp->size, [&] (size_t i) {
           retire_recursive(pp->ptr[i].load());});
-      stm::Delete(pp);
+      sparse_pool.Retire(pp);
     } else if (p->nt == Indirect) {
       auto pp = (indirect_node*) p;
       parlay::parallel_for(0, pp->size, [&] (size_t i) {
           retire_recursive(pp->ptr[i].load());});
-      stm::Delete(pp);
+      indirect_pool.Retire(pp);
     } else {
       auto pp = (full_node*) p;
       parlay::parallel_for(0, 256, [&] (size_t i) {
         retire_recursive(pp->children[i].load());});
-      stm::Delete(pp);
+      full_pool.Retire(pp);
     }
   }
   ~arttree() { retire_recursive(root);}
@@ -791,15 +797,44 @@ struct arttree {
 
   long size() {  return check(); }
 
-  static void clear() {}
+  static void clear() {
+    full_pool.clear();
+    indirect_pool.clear();
+    sparse_pool.clear();
+    small_leaf_pool.clear();
+    big_leaf_pool.clear();
+  }
 
   static void reserve(size_t n) {}
+  
+  static void shuffle(size_t n) {
+    // full_pool.shuffle(n/100);
+    // indirect_pool.shuffle(n/10);
+    // sparse_pool.shuffle(n/5);
+    // small_leaf_pool.shuffle(n);
+    // big_leaf_pool.shuffle(n);
+  }
 
-  static void shuffle(size_t n) {}
-
-  static void stats() {}
-
+  static void stats() {
+    full_pool.stats();
+    indirect_pool.stats();
+    sparse_pool.stats();
+    small_leaf_pool.stats();
+    big_leaf_pool.stats();
+  }
+  
 };
+
+template <typename K, typename V, typename S>
+verlib::memory_pool<typename arttree<K,V,S>::full_node> arttree<K,V,S>::full_pool;
+template <typename K, typename V, typename S>
+verlib::memory_pool<typename arttree<K,V,S>::indirect_node> arttree<K,V,S>::indirect_pool;
+template <typename K, typename V, typename S>
+verlib::memory_pool<typename arttree<K,V,S>::sparse_node> arttree<K,V,S>::sparse_pool;
+template <typename K, typename V, typename S>
+verlib::memory_pool<typename arttree<K,V,S>::small_leaf> arttree<K,V,S>::small_leaf_pool;
+template <typename K, typename V, typename S>
+verlib::memory_pool<typename arttree<K,V,S>::big_leaf> arttree<K,V,S>::big_leaf_pool;
 
 }
 #endif // VERLIB_ARTTREE_H_

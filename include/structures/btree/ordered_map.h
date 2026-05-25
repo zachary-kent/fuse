@@ -22,13 +22,14 @@ template <typename K_,
 struct btree {
   using K = K_;
   using V = V_;
+  static verlib::memory_pool<V> value_pool;
 
   struct VP_indirect {
     V* vp;
     V get_value() { return *vp; }
-    void retire() const { stm::Delete(vp); }
+    void retire() const { value_pool.Retire(vp); }
     VP_indirect() {}
-    VP_indirect(const V& v) : vp(stm::New<V>(v)) {}
+    VP_indirect(const V& v) : vp(value_pool.New(v)) {}
   };
 
   struct VP_direct {
@@ -128,15 +129,19 @@ struct btree {
 
   };
 
+  static verlib::memory_pool<node> node_pool;
+
+
+    
   // helper function for split and rebalance
   template <typename Key, typename Child>
   static std::tuple<node*,K,node*> split_mid(int size, Key get_key, Child get_child) {
     // copy into new left child
     int lsize = size/2;
-    node* new_l = stm::New<node>(lsize, get_key, get_child);
+    node* new_l = node_pool.New(lsize, get_key, get_child);
 
     // copy into new right child
-    node* new_r = stm::New<node>(size - lsize,
+    node* new_r = node_pool.New(size - lsize,
                                 [&] (int i) {return get_key(i + lsize);},
                                 [&] (int i) {return get_child(i + lsize);});
 
@@ -178,7 +183,7 @@ struct btree {
     auto get_child = [=] (int i) {
       if (i < c1->size) return c1->children[i].load();
       else return c2->children[i-c1->size].load();};
-    node* new_p = stm::New<node>(size, get_key, get_child); 
+    node* new_p = node_pool.New(size, get_key, get_child); 
     return new_p;
   }
 
@@ -196,7 +201,7 @@ struct btree {
       else if (i == pos) return c1;
       else if (i == pos+1) return c2;
       else return p->children[i-1].load();};
-    node* new_p = stm::New<node>(size+1, get_key, get_child);
+    node* new_p = node_pool.New(size+1, get_key, get_child);
     return new_p;
   }
 
@@ -211,7 +216,7 @@ struct btree {
       if (i < pos) return p->children[i].load();
       else if (i == pos) return c;
       else return p->children[i+1].load();};
-    node* new_p = stm::New<node>(size-1, get_key, get_child);
+    node* new_p = node_pool.New(size-1, get_key, get_child);
     return new_p;
   }
 
@@ -227,7 +232,7 @@ struct btree {
       if (i == pos) return c1;
       else if (i == pos+1) return c2;
       else return p->children[i].load();};
-    node* new_p = stm::New<node>(size, get_key, get_child);
+    node* new_p = node_pool.New(size, get_key, get_child);
     return new_p;
   }
 
@@ -332,21 +337,23 @@ struct btree {
 
   };
   
+  static verlib::memory_pool<leaf> leaf_pool;
+
   // Insert a new key-value pair by copying into a new leaf.
   static leaf* insert_leaf(leaf* l, const K& k, const V& v, bool upsert=false) {
-    return stm::New<leaf>(l, k, v, upsert);
+    return leaf_pool.New(l, k, v, upsert);
   }
 
   // Remove a key-value pair from the leaf that matches the key k.
   // This copies the values into a new leaf.
-  static leaf* remove_leaf(leaf* l, const K& k) { return stm::New<leaf>(l, k); }
+  static leaf* remove_leaf(leaf* l, const K& k) { return leaf_pool.New(l, k); }
 
   // helper function for split_leaf and rebalance_leaf
   template <typename KeyVal>
     static std::tuple<node*,K,node*> split_mid_leaf(int size, KeyVal get_kv) {
     int lsize = size/2;
-    leaf* new_l = stm::New<leaf>(lsize, 0, get_kv);
-    leaf* new_r = stm::New<leaf>(size - lsize, lsize, get_kv);
+    leaf* new_l = leaf_pool.New(lsize, 0, get_kv);
+    leaf* new_r = leaf_pool.New(size - lsize, lsize, get_kv);
     return std::make_tuple((node*) new_l, get_kv(lsize).key, (node*) new_r);
   } 
 
@@ -369,7 +376,7 @@ struct btree {
   }
 
   static node* join_leaves(node* l, node* r) {
-    return (node*) stm::New<leaf>((leaf*) l, (leaf*) r);
+    return (node*) leaf_pool.New((leaf*) l, (leaf*) r);
   }
 
   // ***************************************
@@ -391,15 +398,15 @@ struct btree {
         if (c->is_leaf) {
           gp->children[pidx] = add_child(p, split_leaf(c), cidx);
           p->removed = true;
-          stm::Delete((leaf*) c);
-          stm::Delete(p);
+          leaf_pool.Retire((leaf*) c);
+          node_pool.Retire(p);
           return true;
         }
         return c->lck.try_lock([=] {
           gp->children[pidx] = add_child(p, split(c), cidx);
           p->removed = c->removed = true;
-          stm::Delete(c);
-          stm::Delete(p);
+          node_pool.Retire(c);
+          node_pool.Retire(p);
           return true;});
       });});
   }
@@ -426,9 +433,9 @@ struct btree {
           else   // rebalance
             gp->children[pidx] = rebalance_children(p, rebalance_leaf(lc, rc), li);
           p->removed = true;
-          stm::Delete(p);
-          stm::Delete((leaf*) lc);
-          stm::Delete((leaf*) rc);
+          node_pool.Retire(p);
+          leaf_pool.Retire((leaf*) lc);
+          leaf_pool.Retire((leaf*) rc);
           return true;
         } else { // internal node
           K& k = p->keys[li];
@@ -440,9 +447,9 @@ struct btree {
               else // rebalance
                 gp->children[pidx] = rebalance_children(p, rebalance(lc, k, rc), li);
               lc->removed = rc->removed = p->removed = true;
-              stm::Delete(p);
-              stm::Delete(lc);
-              stm::Delete(rc);
+              node_pool.Retire(p);
+              node_pool.Retire(lc);
+              node_pool.Retire(rc);
               return true;});});
         }});});
   }
@@ -457,16 +464,16 @@ struct btree {
   static node* copy_node_or_leaf(node* p) {
     if (p->is_leaf) {
       leaf* l = (leaf*) p;
-      leaf* r = stm::New<leaf>(l->size, 0,
+      leaf* r = leaf_pool.New(l->size, 0,
                               [=] (int i) { return l->keyvals[i];});
-      stm::Delete(l);
+      leaf_pool.Retire(l);
       return (node*) r;
     } else {
-      node* r = stm::New<node>(p->size,
+      node* r = node_pool.New(p->size,
                               [=] (int i) {return p->keys[i];},
                               [=] (int i) {return p->children[i].load();});
       p->removed = true;
-      stm::Delete(p);
+      node_pool.Retire(p);
       return r;
     }
   }
@@ -484,11 +491,11 @@ struct btree {
         return false;
       if (c->status == isOver) {
         if (c->is_leaf) {
-          root->children[0] = stm::New<node>(split_leaf(c));
-          stm::Delete((leaf*) c);
+          root->children[0] = node_pool.New(split_leaf(c));
+          leaf_pool.Retire((leaf*) c);
         } else {
-          root->children[0] = stm::New<node>(split(c));
-          stm::Delete(c);
+          root->children[0] = node_pool.New(split(c));
+          node_pool.Retire(c);
         }
         return true;
       } else { // c has degree 1 and not a leaf
@@ -496,12 +503,12 @@ struct btree {
         // if recorded once then child of c needs to be copied
         return c->lck.try_lock([=] {
           root->children[0] = copy_node_or_leaf(c->children[0].load());
-          stm::Delete(c);
+          node_pool.Retire(c);
           return true;});
 #else
         // if not recorded once then can be updated in place
         root->children[0] = c->children[0].load();
-        stm::Delete(c);
+        node_pool.Retire(c);
         return true;
 #endif
       }});
@@ -598,7 +605,7 @@ struct btree {
       if (!verlib::validate([&] {return !p->removed.load() && (leaf*) p->children[cidx].load() == l;}))
         return false;
       p->children[cidx] = (node*) insert_leaf(l, k, v, upsert && idx != -1);
-      stm::Delete(l);
+      leaf_pool.Retire(l);
       return true;})) return !upsert || idx == -1;
     else return {};
   }
@@ -626,7 +633,7 @@ struct btree {
       if (!verlib::validate([&] {return !p->removed.load() && (leaf*) p->children[cidx].load() == l;}))
         return false;
       p->children[cidx] = (node*) remove_leaf(l, k);
-      stm::Delete(l);
+      leaf_pool.Retire(l);
       l->keyvals[idx].value.retire();
       return true;})) return true;
     else return {};
@@ -692,11 +699,11 @@ struct btree {
 
   // An empty tree is an empty leaf along with a root pointing tho the
   // leaf.  The root will always contain a single pointer.
-  btree() : root(stm::New<node>(stm::New<leaf>(0))) {
+  btree() : root(node_pool.New(leaf_pool.New(0))) {
     // std::cout << "key size: " << sizeof(K) << std::endl;
     // std::cout << "value size: " << sizeof(V) << std::endl;
   }
-  btree(size_t n) : root(stm::New<node>(stm::New<leaf>(0))) {
+  btree(size_t n) : root(node_pool.New(leaf_pool.New(0))) {
     // std::cout << "key size: " << sizeof(K) << std::endl;
     // std::cout << "value size: " << sizeof(V) << std::endl;
   }
@@ -707,11 +714,11 @@ struct btree {
       leaf* pl = (leaf*) p;
       for (int i=0; i < pl->size; i++)
 	pl->keyvals[i].value.retire();
-      stm::Delete(pl);
+      leaf_pool.Retire(pl);
     } else {
       parlay::parallel_for(0, p->size, [&] (size_t i) {
 	  retire_recursive(p->children[i].load());},1,true);
-      stm::Delete(p);
+      node_pool.Retire(p);
     }
   }
 
@@ -789,15 +796,39 @@ struct btree {
     std::cout << std::endl;
   }
 
-  static void clear() {}
+  static void clear() {
+    node_pool.clear();
+    leaf_pool.clear();
+    value_pool.clear();
+  }
 
-  static void reserve(size_t n) {}
+  static void reserve(size_t n) {
+    //node_pool.reserve(n);
+    //leaf_pool.reserve(n);
+    //if (use_indirect) value_pool.reserve(n);
+  }
 
-  static void shuffle(size_t n) {}
+  static void shuffle(size_t n) {
+    //node_pool.shuffle(n/8);
+    //leaf_pool.shuffle(n/8);
+  }
 
-  static void stats() {}
+  static void stats() {
+    node_pool.stats();
+    leaf_pool.stats();
+    if (use_indirect) value_pool.stats();
+  }
 
 };
+
+template <typename K, typename V, typename C>
+verlib::memory_pool<typename btree<K,V,C>::node> btree<K,V,C>::node_pool;
+
+template <typename K, typename V, typename C>
+verlib::memory_pool<typename btree<K,V,C>::leaf> btree<K,V,C>::leaf_pool;
+
+template <typename K, typename V, typename C>
+verlib::memory_pool<typename btree<K,V,C>::V> btree<K,V,C>::value_pool;
 
 } // end namespace verlib
 
