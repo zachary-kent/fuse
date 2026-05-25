@@ -112,12 +112,43 @@ namespace verlib {
   using versioned_ptr = ::stm::atomic<T*>;
   using atomic_bool = ::stm::atomic<bool>;
   using lock = ::stm::lock;
+
+  // Thin wrapper that keeps the OL structures' verlib::memory_pool<T>
+  // calling convention (pool.New(args), pool.Retire(ptr), etc.) while
+  // routing everything through ::stm::New / ::stm::Delete. The pooling
+  // itself (per-thread freelist, allocLog/deleteLog tracking) lives
+  // inside the configured stm:: backend — for uSTM that's
+  // uepoch::pool<T> when USTM_MEMORY_POOL is set, plus uSTM's commit-
+  // posted uepoch::delay reclamation. Lets upstream structures stay
+  // unmodified.
+  template <typename T>
+  struct memory_pool {
+    template <typename... Args>
+    T* New(Args... args) { return ::stm::New<T>(args...); }
+
+    template <typename F, typename... Args>
+    T* New_Init(const F& f, Args... args) {
+      T* x = New(args...);
+      f(x);
+      return x;
+    }
+
+    void Delete(T* p) { ::stm::Delete(p); }
+    void Retire(T* p) { ::stm::Delete(p); }
+
+    // flck::memory_pool API compat.
+    void acquire(T*) {}
+    void clear() {}
+    void stats() {}
+    static void shuffle(size_t) {}
+  };
 #else
   struct versioned {};
   template <typename T>
   using versioned_ptr = flck::atomic<T*>;
   using atomic_bool = flck::atomic<bool>;
   using flck::lock;
+  using flck::memory_pool;
 #endif
   template <typename A, typename B, typename C>
   bool validate(const A& a, const B& b, const C& c) {return true;}
