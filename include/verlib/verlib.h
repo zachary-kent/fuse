@@ -18,11 +18,15 @@
 #endif
 
 // Default stm::New / stm::Delete for builds without a glue (the upstream
-// flock benchmark binaries, _flock targets). Structures call stm::New /
-// stm::Delete directly; when OL_USE_STM is set, the user's glue header is
-// expected to have provided its own stm:: namespace before this header
-// is included, in which case these fallbacks are shadowed.
-#ifndef OL_USE_STM
+// flock benchmark binaries — _flock targets). Structures call stm::New /
+// stm::Delete directly; when the caller has wired up a glue
+// (OL_USE_STM for the non-Versioned routing, or MV_STM / MV_TLF /
+// MV_TLF_STM for the fuse-internal verlib types), the glue is expected
+// to have provided its own ::stm:: namespace before this header is
+// included, so the fallback would conflict. Only define when none of
+// those are in effect.
+#if !defined(OL_USE_STM) && !defined(MV_STM) && \
+    !defined(MV_TLF)    && !defined(MV_TLF_STM)
 namespace stm {
   template <typename T, typename... Args>
   inline T* New(Args&&... args) {
